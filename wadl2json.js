@@ -1,3 +1,5 @@
+var util = require('util');
+
 /**
  * A module generating a JSON representation of a WADL content
  * @module wadl2json
@@ -19,36 +21,164 @@
     stringify:  false
   };
 
-  function convertWadlParamType(prefixedType) {
+  wadl2json.options = {};
+
+  //Util
+  var base = {};
+
+  function createUrl (base, path) {      
+    if (!path.length)
+      return _.trimRight(base);
+
+    if (!base.length)
+      return _.trimRight(path);
+
+    return _.trimRight(base,"/") + "/" + _.trim(path,"/");
+  }
+
+  function hasOption (option) {
+    if (option in wadl2json.options === false) 
+      return false;
+
+    //falsy
+    if (!wadl2json.options[option]) 
+      return false;
+
+    if (_.isObject(wadl2json.options[option]) && _.isEmpty(wadl2json.options[option]))
+      return false;
+
+    return true;    
+  }
+
+  function convertWadlParamType (prefixedType) {
     var type = prefixedType.split(":")[1] || prefixedType.split(":")[0];
-    return type == "int" ? "integer" : type;
+    return (type == "int" || type == "long")  ? "integer" : type;
+  }
+
+  function isParamRequired (style) {
+    if (style == "header")
+      return true;
+
+    if (style == "template")
+      return true;
+
+    return false;
   }
 
   /**
    * Extract all methods from a parsed WADL content
    * @private
-   * @param {string} basePath - path which will be prepended to resource path
    * @param {object} resource - WADL <resource> tag
    * @returns {array} all methods contained in resource
    */
-  exports._methodsFromWADLResource = function(basePath, resource) {
-    var path = basePath + (_.last(basePath) == "/" ? "":"/") + resource.path;
+ exports._methodsFromWADLResource = function(basePath, resource) {
+    
+    var path = createUrl(basePath,resource.path);
+    var fullPath = createUrl(base.href, path);
 
     var methods = _.map(resource.method || [], function(method) {
-      var request = method && method.request && method.request[0];
-      var params = (resource.param || [])
-        .concat(request && request.param || [])
-        .concat(request && request.representation && request.representation[0] && request.representation[0].param || []);
 
-      return {
-        verb: method.name,
-        name: method.id,
-        params: params,
-        path: path
+    var request = method && method.request && method.request[0];
+
+    var params = (resource.param || [])
+              .concat(request && request.param || [])
+              .concat(request && request.representation && request.representation[0] && request.representation[0].param || []);        
+    
+    var responses = {};  
+    var integration = {};      
+    var security = [];
+    var hasIntegration = false;
+
+    //Check if Basic Auth is needed and concat it every method for now  
+    if (hasOption("basicAuthHeader")) {  
+
+      var headerName = wadl2json.options.basicAuthHeader;
+
+      params.push({
+          "type": 'xs:string',
+          "style": 'header',
+          "name": headerName
+        });
+
+      integration = _.merge(integration, {
+        "requestParameters": {
+          "integration.request.header.Authorization": "method.request.header." + headerName
+        }
+      });
+
+      hasIntegration = true;
+    }         
+    
+    //Check if API key is needed
+    if (hasOption("apiKey")) {
+        security = [{
+          "api_key": wadl2json.options.apiKey
+        }];
+    }
+
+    //Is CORS enabled?
+    if (hasOption("CORS")) {
+      responses = {          
+        "200": {
+          "description": "200 response",
+          "headers": {
+            "Access-Control-Allow-Origin": {
+              "type": "string"
+            }
+          }
+        }          
       };
-    });
 
-    return methods.concat(_.map(resource.resource || [], _.partial(wadl2json._methodsFromWADLResource, path)));
+      integration = _.merge(integration , {
+        "responses": {
+          "default": {
+            "statusCode": "200",
+            "responseParameters": {
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            }
+          }
+        }
+      });
+
+      hasIntegration = true;                  
+    }
+      
+    //has httpProxy?
+    if (hasOption("httpProxy")) {
+       integration = _.merge(integration , {
+        "responses": {
+          "default": {
+              "responseTemplates": {
+                "application/json": "__passthrough__"
+              }
+            }
+          }
+        });
+
+       hasIntegration = true;                  
+    }
+
+    if (hasIntegration) {
+      integration = _.merge(integration,{
+        "uri": fullPath,
+        "httpMethod": method.name,
+        "type": base.protocol.replace(/:$/, "")
+      });
+    }  
+   
+    return {
+      'verb': method.name,
+      'name': method.id,
+      'params': params,
+      'path': path,
+      'security': security,
+      'integration': integration,
+      'responses': responses
+
+    };
+  });
+
+    return methods.concat(_.map(resource.resource || [], _.partial(wadl2json._methodsFromWADLResource,  path)));
   };
 
   /**
@@ -68,14 +198,14 @@
       return _.foldl(verbs, function(methods, verb) {
         var sortedOperations = _.sortBy(methodsByVerb[verb], "name");
 
-        methods[path] = methods[path] || {};
-        methods[path][verb.toLowerCase()] = {
-          responses: {
-            "default": {
-              description: _.pluck(sortedOperations, "name").join("\n")
-            }
-          },
-          parameters: (function() {
+        methods[path] = methods[path] || {};                        
+        
+        methods[path][verb.toLowerCase()] = {};        
+        
+        methods[path][verb.toLowerCase()].responses = sortedOperations[0].responses || {};          
+          
+        methods[path][verb.toLowerCase()].parameters = (function() {
+
             var params = _.chain(sortedOperations)
               .pluck("params")
               .flatten(true)
@@ -83,7 +213,7 @@
               .map(function(param) {
                 return {
                   "name": param.name,
-                  "required": param.style == "template",
+                  "required": isParamRequired(param.style),
                   "in": ({template: "path", plain: "body"})[param.style] || param.style,
                   "type": convertWadlParamType(param.type)
                 };
@@ -93,9 +223,103 @@
             if(_.size(params) > 0) {
               return params;
             }
-          })()
-        };
+          })();
+
+        //Add security if required
+        if (hasOption("apiKey") && !_.isEmpty(sortedOperations)) {          
+
+          methods[path][verb.toLowerCase()].security = sortedOperations[0].security;           
+          
+          //Add options method
+          if (!_.has(methods[path], "options")) {            
+            var allowedHeaders = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key," + wadl2json.options.basicAuthHeader+ "'";
+            var optionsParamsGet = _.chain(_.get(methods, '['+path+']["get"]["parameters"]', false))
+                            .filter(function(param) {
+                                  return param.name != wadl2json.options.basicAuthHeader;
+                            })
+                            .value();
+                            
+            var optionsParamsPost =_.chain(_.get(methods, '['+path+']["post"]["parameters"]', false))
+                            .filter(function(param) {
+                                  return param.name != wadl2json.options.basicAuthHeader;
+                            })
+                            .value();
+
+            var optionsParamsPut = _.chain(_.get(methods, '['+path+']["put"]["parameters"]', false))
+                            .filter(function(param) {
+                                  return param.name != wadl2json.options.basicAuthHeader;
+                            })
+                            .value();
+
+            var optionsParamsDelete = _.chain(_.get(methods, '['+path+']["delete"]["parameters"]', false))
+                            .filter(function(param) {
+                                  return param.name != wadl2json.options.basicAuthHeader;
+                            })
+                            .value();
+
+            var optionsParams = (_.isEmpty(optionsParamsGet) ? false : optionsParamsGet) ||
+                                (_.isEmpty(optionsParamsPost) ? false : optionsParamsPost) ||
+                                (_.isEmpty(optionsParamsPut) ? false : optionsParamsPut) ||
+                                (_.isEmpty(optionsParamsDelete) ? false : optionsParamsDelete);                                                                                                                                                                          
+
+            methods[path].options = {
+              "produces": [
+                "application/json"
+              ],
+              "parameters": optionsParams? optionsParams: [],
+              "responses": {
+                "200": {
+                  "description": "200 response",
+                  "schema": {
+                    "$ref": "#/definitions/Empty"
+                  },
+                  "headers": {
+                    "Access-Control-Allow-Origin": {
+                      "type": "string"
+                    },
+                    "Access-Control-Allow-Methods": {
+                      "type": "string"
+                    },
+                    "Access-Control-Allow-Headers": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "security": [
+                {
+                  "api_key": wadl2json.options.apiKey
+                }
+              ],
+              "x-amazon-apigateway-integration": {
+                "responses": {
+                  "default": {
+                    "statusCode": "200",
+                    "responseParameters": {
+                      "method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS,PUT'",
+                      "method.response.header.Access-Control-Allow-Headers": allowedHeaders,
+                      "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    },
+                    "responseTemplates": {
+                      "application/json": "__passthrough__"
+                    }
+                  }
+                },
+                "requestTemplates": {
+                  "application/json": "{\"statusCode\": 200}"
+                },
+                "type": "mock"
+              }
+            };
+          }
+        }
+
+        //Add integration
+        if (!_.isEmpty(sortedOperations))
+          methods[path][verb.toLowerCase()]["x-amazon-apigateway-integration"] = sortedOperations[0].integration;  
+        
         return methods;
+
       }, methods);
     }, {});
   };
@@ -107,17 +331,18 @@
    * @returns {object|string} JSON representation of given WADL content
    */
   exports.fromJSON = function(wadlJson, options) {
-    options = _.extend({}, wadl2json._defaultOptions, options);
 
+    wadl2json.options = _.extend({}, wadl2json._defaultOptions, options);
+    
     var app = wadlJson && wadlJson.application && wadlJson.application[0];
     var resources = app && app.resources && app.resources[0];
-    var base = resources && resources.base && require("url").parse(resources.base);
-
+    base = resources && resources.base && require("url").parse(resources.base);
+        
     var methods = _.chain(resources && resources.resource)
-      .map(_.partial(wadl2json._methodsFromWADLResource, "/"))
+      .map(_.partial(wadl2json._methodsFromWADLResource, ""))
       .flatten(true)
       .filter(function(method) {
-        return _.all(options.blacklist, function(path) {
+        return _.all(wadl2json.options.blacklist, function(path) {          
           return method.path.indexOf(path) !== 0;
         });
       })
@@ -135,10 +360,24 @@
     json.paths = methodsByPath;
 
     json.info = {
-      title: options.title || "",
-      version: options.version || "",
-      description: options.description || ""
+      title: wadl2json.options.title || "",
+      version: wadl2json.options.version || "",
+      description: wadl2json.options.description || ""
     };
+
+    if(hasOption("apiKey")) {
+       json.securityDefinitions =  {
+          "api_key": {
+            "type": "apiKey",
+            "name": "x-api-key",
+            "in": "header"
+          }
+        };        
+
+        json.definitions = {
+          "Empty": {}
+        };               
+    }
 
     json = options.stringify ? JSON.stringify(json) : json;
     json = options.stringify && options.prettify ? beautify(json, {indent_size: 2}) : json;

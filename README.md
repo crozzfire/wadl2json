@@ -1,11 +1,7 @@
 wadl2json
 =========
 
-[![Build Status](https://travis-ci.org/rbelouin/wadl2json.svg?branch=js)](https://travis-ci.org/rbelouin/wadl2json)
-
 Convert a remote WADL file into a JSON equivalent. See the [swagger spec](https://github.com/swagger-api/swagger-spec/blob/master/versions/2.0.md) for further information about the format of the JSON returned.
-
-See [rbelouin/wadl-client](https://github.com/rbelouin/wadl-client) for generating a javascript client from a swagger json file.
 
 How to use it
 -------------
@@ -24,6 +20,11 @@ var options = {
   description: "Simple API description", // the description of the API (required)
   version: "1.4.2", // the version of the API (required)
 
+  apiKey: ["MyAPIKey"], //Required API Key 
+  basicAuthHeader: "Auth-Header-To-Map", //Basic Auth Header that will be mapped in the integration
+  CORS: true, // Enable CORS for all endpoints
+  httpProxy: true, //Proxy all the given endpoints 
+  
   blacklist: ["/internal"] // the path roots you want to blacklist
 };
 
@@ -38,7 +39,20 @@ How to build
 Please install [node](http://nodejs.org/) and [npm](https://www.npmjs.org/) on your system.
 Then:
 
-```sh
-  npm install
-  npm test
 ```
+cd /path/to/wadl2json
+npm install
+```
+
+Note that you can also install the lib globally (with -g flag) as:
+
+```
+cd /path/to/wadl2json
+npm install -g
+```
+
+
+TODOS
+_____
+
+The tests have become inconsistent after adding several features. The code needs to be refactored a bit and new tests are to be written.
