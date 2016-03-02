@@ -51,8 +51,7 @@ cd /path/to/wadl2json
 npm install -g
 ```
 
-
 TODOS
-_____
+-----
 
 The tests have become inconsistent after adding several features. The code needs to be refactored a bit and new tests are to be written.
