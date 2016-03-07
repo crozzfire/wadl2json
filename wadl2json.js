@@ -227,46 +227,19 @@ var util = require('util');
 
         //Add security if required
         if (hasOption("apiKey") && !_.isEmpty(sortedOperations)) {          
-
           methods[path][verb.toLowerCase()].security = sortedOperations[0].security;           
-          
+        }  
+        
+        if (hasOption("CORS") && !_.isEmpty(sortedOperations)) {
           //Add options method
           if (!_.has(methods[path], "options")) {            
-            var allowedHeaders = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key," + wadl2json.options.basicAuthHeader+ "'";
-            var optionsParamsGet = _.chain(_.get(methods, '['+path+']["get"]["parameters"]', false))
-                            .filter(function(param) {
-                                  return param.name != wadl2json.options.basicAuthHeader;
-                            })
-                            .value();
-                            
-            var optionsParamsPost =_.chain(_.get(methods, '['+path+']["post"]["parameters"]', false))
-                            .filter(function(param) {
-                                  return param.name != wadl2json.options.basicAuthHeader;
-                            })
-                            .value();
-
-            var optionsParamsPut = _.chain(_.get(methods, '['+path+']["put"]["parameters"]', false))
-                            .filter(function(param) {
-                                  return param.name != wadl2json.options.basicAuthHeader;
-                            })
-                            .value();
-
-            var optionsParamsDelete = _.chain(_.get(methods, '['+path+']["delete"]["parameters"]', false))
-                            .filter(function(param) {
-                                  return param.name != wadl2json.options.basicAuthHeader;
-                            })
-                            .value();
-
-            var optionsParams = (_.isEmpty(optionsParamsGet) ? false : optionsParamsGet) ||
-                                (_.isEmpty(optionsParamsPost) ? false : optionsParamsPost) ||
-                                (_.isEmpty(optionsParamsPut) ? false : optionsParamsPut) ||
-                                (_.isEmpty(optionsParamsDelete) ? false : optionsParamsDelete);                                                                                                                                                                          
+            var allowedHeaders = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-requested-with," + wadl2json.options.basicAuthHeader+ "'";                                                                                                                                                                                  
 
             methods[path].options = {
               "produces": [
                 "application/json"
               ],
-              "parameters": optionsParams? optionsParams: [],
+              "parameters": [],
               "responses": {
                 "200": {
                   "description": "200 response",
@@ -285,18 +258,13 @@ var util = require('util');
                     }
                   }
                 }
-              },
-              "security": [
-                {
-                  "api_key": wadl2json.options.apiKey
-                }
-              ],
+              },             
               "x-amazon-apigateway-integration": {
                 "responses": {
                   "default": {
                     "statusCode": "200",
                     "responseParameters": {
-                      "method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS,PUT'",
+                      "method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS,PUT,POST'",
                       "method.response.header.Access-Control-Allow-Headers": allowedHeaders,
                       "method.response.header.Access-Control-Allow-Origin": "'*'"
                     },
